@@ -2764,3 +2764,20 @@ func TestNodeCanConstructNamespacedComponent(t *testing.T) {
 	e.RunCommand("pulumi", "install")
 	e.RunCommand("pulumi", "up", "--non-interactive", "--skip-preview")
 }
+
+func TestNodeMultistack(t *testing.T) {
+	t.Parallel()
+
+	e := ptesting.NewEnvironment(t)
+	defer e.DeleteIfNotFailed()
+
+	e.ImportDirectory("multistack/nodejs")
+
+	top := e.CWD
+
+	e.CWD = filepath.Join(top, "a")
+	e.RunCommand("yarn", "install")
+
+	e.CWD = filepath.Join(top, "b")
+	e.RunCommand("yarn", "install")
+}

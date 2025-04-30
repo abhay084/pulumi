@@ -2502,6 +2502,7 @@ func (rm *resmon) RegisterResourceOutputs(ctx context.Context,
 			ComputeAssetHashes: true,
 			KeepSecrets:        true,
 			KeepResources:      true,
+			KeepOutputValues:   true,
 			WorkingDirectory:   rm.workingDirectory,
 		})
 	if err != nil {
