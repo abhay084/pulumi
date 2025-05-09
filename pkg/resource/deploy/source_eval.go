@@ -306,6 +306,8 @@ func (iter *evalSourceIterator) forkRun(
 // resource that will be used to manage resources that do not explicitly reference a provider. Default providers will
 // only be registered for packages that are used by resources registered by the user's Pulumi program.
 type defaultProviders struct {
+	runInfo *EvalRunInfo
+
 	// A map of package identifiers to versions, used to disambiguate which plugin to load if no version is provided
 	// by the language host.
 	defaultProviderInfo map[tokens.Package]workspace.PackageDescriptor
@@ -313,7 +315,6 @@ type defaultProviders struct {
 	// A map of ProviderRequest strings to provider references, used to keep track of the set of default providers that
 	// have already been loaded.
 	providers map[string]providers.Reference
-	config    plugin.ConfigSource
 
 	requests        chan defaultProviderRequest
 	providerRegChan chan<- *registerResourceEvent
@@ -409,7 +410,7 @@ func (d *defaultProviders) newRegisterDefaultProviderEvent(
 	req providers.ProviderRequest,
 ) (*registerResourceEvent, <-chan *RegisterResult, error) {
 	// Attempt to get the config for the package.
-	inputs, err := d.config.GetPackageConfig(req.Package())
+	inputs, err := d.runInfo.Target.GetPackageConfig(req.Package())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -433,7 +434,13 @@ func (d *defaultProviders) newRegisterDefaultProviderEvent(
 		goal: resource.NewGoal(
 			providers.MakeProviderType(req.Package()),
 			req.DefaultName(), true, inputs, "", nil, nil, "", nil, nil, nil,
-			nil, nil, nil, "", nil, nil, nil, "", ""),
+			nil, nil, nil, "", nil, nil, nil, "", "",
+			resource.StackReference{
+				Organization: d.runInfo.Target.Organization.String(),
+				Project:      string(d.runInfo.Proj.Name),
+				Stack:        string(d.runInfo.Target.Name.String()),
+			},
+		),
 		done: done,
 	}
 	return event, done, nil
@@ -512,7 +519,7 @@ func (d *defaultProviders) shouldDenyRequest(req providers.ProviderRequest) (boo
 		return false, nil
 	}
 
-	pConfig, err := d.config.GetPackageConfig("pulumi")
+	pConfig, err := d.runInfo.Target.GetPackageConfig("pulumi")
 	if err != nil {
 		return true, err
 	}
@@ -637,8 +644,7 @@ type resmon struct {
 	done                   <-chan error                       // a channel that resolves when the server completes.
 	opts                   EvalSourceOptions                  // options for the resource monitor.
 
-	// the working directory for the resources sent to this monitor.
-	workingDirectory string
+	runInfo *EvalRunInfo // the run info for this resource monitor.
 
 	stackTransformsLock       sync.Mutex
 	stackTransforms           []TransformFunction // stack transformation functions
@@ -673,9 +679,9 @@ func newResourceMonitor(
 
 	// Create a new default provider manager.
 	d := &defaultProviders{
+		runInfo:             src.runinfo,
 		defaultProviderInfo: src.defaultProviderInfo,
 		providers:           make(map[string]providers.Reference),
-		config:              src.runinfo.Target,
 		requests:            make(chan defaultProviderRequest),
 		providerRegChan:     regChan,
 		cancel:              cancel,
@@ -686,7 +692,7 @@ func newResourceMonitor(
 		diagnostics:        src.plugctx.Diag,
 		providers:          provs,
 		defaultProviders:   d,
-		workingDirectory:   src.runinfo.Pwd,
+		runInfo:            src.runinfo,
 		sourcePositions:    newSourcePositions(src.runinfo.ProjectRoot),
 		pendingTransforms:  map[string][]TransformFunction{},
 		parents:            map[resource.URN]resource.URN{},
@@ -991,7 +997,7 @@ func (rm *resmon) Invoke(ctx context.Context, req *pulumirpc.ResourceInvokeReque
 			KeepUnknowns:     true,
 			KeepSecrets:      true,
 			KeepResources:    true,
-			WorkingDirectory: rm.workingDirectory,
+			WorkingDirectory: rm.runInfo.Pwd,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal %v args: %w", tok, err)
@@ -1069,7 +1075,7 @@ func (rm *resmon) Invoke(ctx context.Context, req *pulumirpc.ResourceInvokeReque
 		KeepUnknowns:     true,
 		KeepSecrets:      true,
 		KeepResources:    keepResources,
-		WorkingDirectory: rm.workingDirectory,
+		WorkingDirectory: rm.runInfo.Pwd,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal %v return: %w", tok, err)
@@ -1167,7 +1173,7 @@ func (rm *resmon) Call(ctx context.Context, req *pulumirpc.ResourceCallRequest) 
 			KeepResources:         true,
 			KeepOutputValues:      true,
 			UpgradeToOutputValues: true,
-			WorkingDirectory:      rm.workingDirectory,
+			WorkingDirectory:      rm.runInfo.Pwd,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal %v args: %w", tok, err)
@@ -1248,7 +1254,7 @@ func (rm *resmon) Call(ctx context.Context, req *pulumirpc.ResourceCallRequest) 
 		KeepUnknowns:     true,
 		KeepSecrets:      true,
 		KeepResources:    true,
-		WorkingDirectory: rm.workingDirectory,
+		WorkingDirectory: rm.runInfo.Pwd,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal %v return: %w", tok, err)
@@ -1324,7 +1330,7 @@ func (rm *resmon) ReadResource(ctx context.Context,
 		KeepUnknowns:     true,
 		KeepSecrets:      true,
 		KeepResources:    true,
-		WorkingDirectory: rm.workingDirectory,
+		WorkingDirectory: rm.runInfo.Pwd,
 	})
 	if err != nil {
 		return nil, err
@@ -1369,7 +1375,7 @@ func (rm *resmon) ReadResource(ctx context.Context,
 		KeepUnknowns:     true,
 		KeepSecrets:      req.GetAcceptSecrets(),
 		KeepResources:    req.GetAcceptResources(),
-		WorkingDirectory: rm.workingDirectory,
+		WorkingDirectory: rm.runInfo.Pwd,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal %s return state: %w", result.State.URN, err)
@@ -1402,7 +1408,7 @@ func (rm *resmon) wrapTransformCallback(cb *pulumirpc.Callback) (TransformFuncti
 			KeepSecrets:      true,
 			KeepResources:    true,
 			KeepOutputValues: true,
-			WorkingDirectory: rm.workingDirectory,
+			WorkingDirectory: rm.runInfo.Pwd,
 		}
 
 		mprops, err := plugin.MarshalProperties(props, mopts)
@@ -1477,7 +1483,7 @@ func (rm *resmon) wrapInvokeTransformCallback(cb *pulumirpc.Callback) (Transform
 			KeepSecrets:      true,
 			KeepResources:    true,
 			KeepOutputValues: true,
-			WorkingDirectory: rm.workingDirectory,
+			WorkingDirectory: rm.runInfo.Pwd,
 		}
 
 		mprops, err := plugin.MarshalProperties(args, margs)
@@ -1839,7 +1845,7 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 			KeepResources:         true,
 			KeepOutputValues:      true,
 			UpgradeToOutputValues: true,
-			WorkingDirectory:      rm.workingDirectory,
+			WorkingDirectory:      rm.runInfo.Pwd,
 		})
 	if err != nil {
 		return nil, err
@@ -2309,6 +2315,11 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 			providerRef.String(), nil, rawPropertyDependencies, opts.DeleteBeforeReplace, ignoreChanges,
 			additionalSecretKeys, parsedAliases, id, &timeouts, replaceOnChanges, retainOnDelete, deletedWith,
 			sourcePosition,
+			resource.StackReference{
+				Organization: rm.runInfo.Target.Organization.String(),
+				Project:      string(rm.runInfo.Proj.Name),
+				Stack:        string(rm.runInfo.Target.Name.String()),
+			},
 		)
 
 		if goal.Parent != "" {
@@ -2445,7 +2456,7 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 		KeepUnknowns:     true,
 		KeepSecrets:      req.GetAcceptSecrets(),
 		KeepResources:    req.GetAcceptResources(),
-		WorkingDirectory: rm.workingDirectory,
+		WorkingDirectory: rm.runInfo.Pwd,
 	})
 	if err != nil {
 		return nil, err
@@ -2503,7 +2514,7 @@ func (rm *resmon) RegisterResourceOutputs(ctx context.Context,
 			KeepSecrets:        true,
 			KeepResources:      true,
 			KeepOutputValues:   true,
-			WorkingDirectory:   rm.workingDirectory,
+			WorkingDirectory:   rm.runInfo.Pwd,
 		})
 	if err != nil {
 		return nil, fmt.Errorf("cannot unmarshal output properties: %w", err)
