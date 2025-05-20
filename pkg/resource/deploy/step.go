@@ -959,12 +959,8 @@ type RefreshStep struct {
 	old *resource.State
 	// the new resource state, to be used to query the provider
 	new *resource.State
-	// the URN to use for this refresh step, is taken from the new state
-	urn resource.URN
-	// the type of the resource to refresh, is taken from the new state
-	typ tokens.Type
-	// the provider to use for this refresh step, is taken from the new state
-	prov string
+	// isDeleted is true if `New()` should return nil because the refresh determined the resource was deleted.
+	isDeleted bool
 	// the optional provider to use.
 	provider plugin.Provider
 	// the diff between the cloud provider and the state file
@@ -979,18 +975,16 @@ func NewRefreshStep(
 	old *resource.State, new *resource.State,
 ) Step {
 	contract.Requiref(old != nil, "old", "must not be nil")
+
+	// NOTE: we set the new state to the old state by default so that we don't interpret step failures as deletes.
 	if new == nil {
 		new = old
 	}
 
-	// NOTE: we set the new state to the old state by default so that we don't interpret step failures as deletes.
 	return &RefreshStep{
 		deployment: deployment,
 		old:        old,
 		new:        new,
-		urn:        new.URN,
-		typ:        new.Type,
-		prov:       new.Provider,
 		cts:        cts,
 	}
 }
@@ -998,13 +992,18 @@ func NewRefreshStep(
 // True if this is a persisted refresh step that should be respected by the snapshot system.
 func (s *RefreshStep) Persisted() bool { return s.cts != nil }
 
-func (s *RefreshStep) Op() display.StepOp                           { return OpRefresh }
-func (s *RefreshStep) Deployment() *Deployment                      { return s.deployment }
-func (s *RefreshStep) Type() tokens.Type                            { return s.typ }
-func (s *RefreshStep) Provider() string                             { return s.prov }
-func (s *RefreshStep) URN() resource.URN                            { return s.urn }
-func (s *RefreshStep) Old() *resource.State                         { return s.old }
-func (s *RefreshStep) New() *resource.State                         { return s.new }
+func (s *RefreshStep) Op() display.StepOp      { return OpRefresh }
+func (s *RefreshStep) Deployment() *Deployment { return s.deployment }
+func (s *RefreshStep) Type() tokens.Type       { return s.new.Type }
+func (s *RefreshStep) Provider() string        { return s.new.Provider }
+func (s *RefreshStep) URN() resource.URN       { return s.new.URN }
+func (s *RefreshStep) Old() *resource.State    { return s.old }
+func (s *RefreshStep) New() *resource.State {
+	if s.isDeleted {
+		return nil
+	}
+	return s.new
+}
 func (s *RefreshStep) Res() *resource.State                         { return s.old }
 func (s *RefreshStep) Logical() bool                                { return false }
 func (s *RefreshStep) Diffs() []resource.PropertyKey                { return s.diff.ChangedKeys }
@@ -1174,7 +1173,7 @@ func (s *RefreshStep) Apply() (resource.Status, StepCompleteFunc, error) {
 			logging.V(7).Infof("Refresh diff for %s: %v", s.URN(), s.diff)
 		}
 	} else {
-		s.new = nil
+		s.isDeleted = true
 	}
 
 	complete := func() {
