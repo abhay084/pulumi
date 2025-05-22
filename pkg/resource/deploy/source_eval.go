@@ -119,11 +119,6 @@ func (src *evalSource) Close() error {
 	return nil
 }
 
-// Project is the name of the project being run by this evaluation source.
-func (src *evalSource) Project() tokens.PackageName {
-	return src.runinfo.Proj.Name
-}
-
 // Stack is the name of the stack being targeted by this evaluation source.
 func (src *evalSource) Stack() tokens.StackName {
 	return src.runinfo.Target.Name
@@ -438,7 +433,7 @@ func (d *defaultProviders) newRegisterDefaultProviderEvent(
 			resource.StackReference{
 				Organization: d.runInfo.Target.Organization.String(),
 				Project:      string(d.runInfo.Proj.Name),
-				Stack:        string(d.runInfo.Target.Name.String()),
+				Stack:        d.runInfo.Target.Name.String(),
 			},
 		),
 		done: done,
@@ -1341,6 +1336,12 @@ func (rm *resmon) ReadResource(ctx context.Context,
 		additionalSecretOutputs = append(additionalSecretOutputs, resource.PropertyKey(name))
 	}
 
+	stackReference := resource.StackReference{
+		Organization: rm.runInfo.Target.Organization.String(),
+		Project:      rm.runInfo.Proj.Name.String(),
+		Stack:        rm.runInfo.Target.Name.String(),
+	}
+
 	event := &readResourceEvent{
 		id:                      id,
 		name:                    name,
@@ -1351,6 +1352,7 @@ func (rm *resmon) ReadResource(ctx context.Context,
 		dependencies:            deps,
 		additionalSecretOutputs: additionalSecretOutputs,
 		sourcePosition:          rm.sourcePositions.getFromRequest(req),
+		stackReference:          stackReference,
 		done:                    make(chan *ReadResult),
 	}
 	select {
@@ -2318,7 +2320,7 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 			resource.StackReference{
 				Organization: rm.runInfo.Target.Organization.String(),
 				Project:      string(rm.runInfo.Proj.Name),
-				Stack:        string(rm.runInfo.Target.Name.String()),
+				Stack:        rm.runInfo.Target.Name.String(),
 			},
 		)
 
@@ -2599,6 +2601,7 @@ type readResourceEvent struct {
 	dependencies            []resource.URN
 	additionalSecretOutputs []resource.PropertyKey
 	sourcePosition          string
+	stackReference          resource.StackReference
 	done                    chan *ReadResult
 }
 
@@ -2616,7 +2619,8 @@ func (g *readResourceEvent) Dependencies() []resource.URN     { return g.depende
 func (g *readResourceEvent) AdditionalSecretOutputs() []resource.PropertyKey {
 	return g.additionalSecretOutputs
 }
-func (g *readResourceEvent) SourcePosition() string { return g.sourcePosition }
+func (g *readResourceEvent) SourcePosition() string                  { return g.sourcePosition }
+func (g *readResourceEvent) StackReference() resource.StackReference { return g.stackReference }
 
 func (g *readResourceEvent) Done(result *ReadResult) {
 	g.done <- result

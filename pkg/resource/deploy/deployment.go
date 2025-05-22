@@ -290,8 +290,6 @@ type Deployment struct {
 	opts *Options
 	// event handlers for this deployment.
 	events Events
-	// the deployment target.
-	target *Target
 	// the old resource snapshot for comparison.
 	prev *Snapshot
 	// a map of all old resources.
@@ -403,6 +401,8 @@ func migrateProviders(target *Target, prev *Snapshot, source Source) error {
 	// created prior to the changes that added first-class providers. We do this here rather than in the migration
 	// package s.t. the inputs to any default providers (which we fetch from the stacks's configuration) are as
 	// accurate as possible.
+
+	// TODO(multistack) how to do this...
 	if err := addDefaultProviders(target, source, prev); err != nil {
 		return err
 	}
@@ -466,7 +466,6 @@ func NewDeployment(
 	ctx *plugin.Context,
 	opts *Options,
 	events Events,
-	target *Target,
 	prev *Snapshot,
 	plan *Plan,
 	source Source,
@@ -474,12 +473,11 @@ func NewDeployment(
 	backendClient BackendClient,
 ) (*Deployment, error) {
 	contract.Requiref(ctx != nil, "ctx", "must not be nil")
-	contract.Requiref(target != nil, "target", "must not be nil")
 	contract.Requiref(source != nil, "source", "must not be nil")
 
-	if err := migrateProviders(target, prev, source); err != nil {
-		return nil, err
-	}
+	//if err := migrateProviders(target, prev, source); err != nil {
+	//	return nil, err
+	//}
 
 	// Produce a map of all old resources for fast access.
 	//
@@ -513,7 +511,6 @@ func NewDeployment(
 		ctx:                  ctx,
 		opts:                 opts,
 		events:               events,
-		target:               target,
 		prev:                 prev,
 		plan:                 plan,
 		olds:                 olds,
@@ -523,13 +520,14 @@ func NewDeployment(
 		providers:            reg,
 		goals:                newGoals,
 		news:                 newResources,
-		newPlans:             newResourcePlan(target.Config),
-		reads:                reads,
+		// TODO(multistack) what to do about plans here?
+		// newPlans:             newResourcePlan(target.Config),
+		newPlans: newResourcePlan(config.Map{}),
+		reads:    reads,
 	}, nil
 }
 
 func (d *Deployment) Ctx() *plugin.Context                   { return d.ctx }
-func (d *Deployment) Target() *Target                        { return d.target }
 func (d *Deployment) Diag() diag.Sink                        { return d.ctx.Diag }
 func (d *Deployment) Prev() *Snapshot                        { return d.prev }
 func (d *Deployment) Olds() map[resource.URN]*resource.State { return d.olds }
@@ -585,7 +583,12 @@ func (d *Deployment) GetProvider(ref providers.Reference) (plugin.Provider, bool
 
 // generateURN generates a resource's URN from its parent, type, and name under the scope of the deployment's stack and
 // project.
-func (d *Deployment) generateURN(parent resource.URN, ty tokens.Type, name string) resource.URN {
+func (d *Deployment) generateURN(
+	stackReference resource.StackReference,
+	parent resource.URN,
+	ty tokens.Type,
+	name string,
+) resource.URN {
 	// Use the resource goal state name to produce a globally unique URN.
 	parentType := tokens.Type("")
 	if parent != "" && parent.QualifiedType() != resource.RootStackType {
@@ -593,12 +596,20 @@ func (d *Deployment) generateURN(parent resource.URN, ty tokens.Type, name strin
 		parentType = parent.QualifiedType()
 	}
 
-	return resource.NewURN(d.Target().Name.Q(), d.source.Project(), parentType, ty, name)
+	return resource.NewURN(
+		tokens.QName(stackReference.Stack),
+		tokens.PackageName(stackReference.Project),
+		parentType,
+		ty,
+		name,
+	)
 }
 
 // defaultProviderURN generates the URN for the global provider given a package.
 func defaultProviderURN(target *Target, source Source, pkg tokens.Package) resource.URN {
-	return resource.NewURN(target.Name.Q(), source.Project(), "", providers.MakeProviderType(pkg), "default")
+	// TODO(multistack) see migrateProviders
+	// return resource.NewURN(target.Name.Q(), source.Project(), "", providers.MakeProviderType(pkg), "default")
+	return resource.NewURN(target.Name.Q(), "", "", providers.MakeProviderType(pkg), "default")
 }
 
 // generateEventURN generates a URN for the resource associated with the given event.
@@ -608,9 +619,9 @@ func (d *Deployment) generateEventURN(event SourceEvent) resource.URN {
 	switch e := event.(type) {
 	case RegisterResourceEvent:
 		goal := e.Goal()
-		return d.generateURN(goal.Parent, goal.Type, goal.Name)
+		return d.generateURN(goal.StackReference, goal.Parent, goal.Type, goal.Name)
 	case ReadResourceEvent:
-		return d.generateURN(e.Parent(), e.Type(), e.Name())
+		return d.generateURN(e.StackReference(), e.Parent(), e.Type(), e.Name())
 	case RegisterResourceOutputsEvent:
 		return e.URN()
 	default:

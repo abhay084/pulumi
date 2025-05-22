@@ -128,7 +128,7 @@ func newDestroySource(
 
 	// Create a nil source.  This simply returns "nothing" as the new state, which will cause the
 	// engine to destroy the entire existing state.
-	return deploy.NewNullSource(proj.Name), nil
+	return deploy.NewNullSource(), nil
 }
 
 // DestroyV2 is a version of Destroy that uses the normal update source (i.e. it runs the user program) and

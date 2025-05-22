@@ -123,7 +123,7 @@ func newRefreshSource(
 	}
 
 	// Just return an error source. Refresh doesn't use its source.
-	return deploy.NewErrorSource(proj.Name), nil
+	return deploy.NewErrorSource(), nil
 }
 
 // RefreshV2 is a version of Refresh that uses the normal update source (i.e. it runs the user program) and

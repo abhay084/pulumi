@@ -224,10 +224,13 @@ func (sg *stepGenerator) bailDiag(diag *diag.Diag, args ...interface{}) error {
 
 // generateURN generates a URN for a new resource and confirms we haven't seen it before in this deployment.
 func (sg *stepGenerator) generateURN(
-	parent resource.URN, ty tokens.Type, name string,
+	stackReference resource.StackReference,
+	parent resource.URN,
+	ty tokens.Type,
+	name string,
 ) (resource.URN, error) {
 	// Generate a URN for this new resource, confirm we haven't seen it before in this deployment.
-	urn := sg.deployment.generateURN(parent, ty, name)
+	urn := sg.deployment.generateURN(stackReference, parent, ty, name)
 	if sg.urns[urn] {
 		// TODO[pulumi/pulumi-framework#19]: improve this error message!
 		return "", sg.bailDiag(diag.GetDuplicateResourceURNError(urn), urn)
@@ -245,7 +248,7 @@ func (sg *stepGenerator) GenerateReadSteps(event ReadResourceEvent) ([]Step, err
 		return nil, err
 	}
 
-	urn, err := sg.generateURN(parent, event.Type(), event.Name())
+	urn, err := sg.generateURN(event.StackReference(), parent, event.Type(), event.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -482,11 +485,11 @@ func (sg *stepGenerator) collapseAliasToUrn(goal *resource.Goal, alias resource.
 
 	project := alias.Project
 	if project == "" {
-		project = sg.deployment.source.Project().String()
+		project = goal.StackReference.Project
 	}
 	stack := alias.Stack
 	if stack == "" {
-		stack = sg.deployment.Target().Name.String()
+		stack = goal.StackReference.Stack
 	}
 
 	return resource.CreateURN(n, t, parent, project, stack)
@@ -496,6 +499,7 @@ func (sg *stepGenerator) collapseAliasToUrn(goal *resource.Goal, alias resource.
 // parent. This may involve changing the name of the resource in cases where the resource has a named derived
 // from the name of the parent, and the parent name changed.
 func (sg *stepGenerator) inheritedChildAlias(
+	stackReference resource.StackReference,
 	childType tokens.Type,
 	childName, parentName string,
 	parentAlias resource.URN,
@@ -518,8 +522,8 @@ func (sg *stepGenerator) inheritedChildAlias(
 		aliasName = parentAlias.Name() + strings.TrimPrefix(childName, parentName)
 	}
 	return resource.NewURN(
-		sg.deployment.Target().Name.Q(),
-		sg.deployment.source.Project(),
+		tokens.QName(stackReference.Stack),
+		tokens.PackageName(stackReference.Project),
 		parentAlias.QualifiedType(),
 		childType,
 		aliasName)
@@ -543,12 +547,12 @@ func (sg *stepGenerator) generateAliases(goal *resource.Goal) []resource.URN {
 	// Now multiply out any aliases our parent had.
 	if goal.Parent != "" {
 		if parentAlias, has := sg.aliases[goal.Parent]; has {
-			addAlias(sg.inheritedChildAlias(goal.Type, goal.Name, goal.Parent.Name(), parentAlias))
+			addAlias(sg.inheritedChildAlias(goal.StackReference, goal.Type, goal.Name, goal.Parent.Name(), parentAlias))
 			for _, alias := range goal.Aliases {
 				childAlias := sg.collapseAliasToUrn(goal, alias)
 				aliasedChildType := childAlias.Type()
 				aliasedChildName := childAlias.Name()
-				inheritedAlias := sg.inheritedChildAlias(aliasedChildType, aliasedChildName, goal.Parent.Name(), parentAlias)
+				inheritedAlias := sg.inheritedChildAlias(goal.StackReference, aliasedChildType, aliasedChildName, goal.Parent.Name(), parentAlias)
 				addAlias(inheritedAlias)
 			}
 		}
@@ -569,7 +573,7 @@ func (sg *stepGenerator) generateSteps(event RegisterResourceEvent) ([]Step, boo
 	}
 	goal.Parent = parent
 
-	urn, err := sg.generateURN(goal.Parent, goal.Type, goal.Name)
+	urn, err := sg.generateURN(goal.StackReference, goal.Parent, goal.Type, goal.Name)
 	if err != nil {
 		return nil, false, err
 	}
@@ -2724,7 +2728,8 @@ func (sg *stepGenerator) AnalyzeResources() error {
 				}
 			}
 			if urn == "" {
-				urn = resource.DefaultRootStackURN(sg.deployment.Target().Name.Q(), sg.deployment.source.Project())
+				// TODO(multistack) work this out
+				urn = "" // resource.DefaultRootStackURN(sg.deployment.Target().Name.Q(), sg.deployment.source.Project())
 			}
 			sg.deployment.events.OnPolicyViolation(urn, d)
 		}

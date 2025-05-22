@@ -440,9 +440,9 @@ func SerializePropertyValue(ctx context.Context, prop resource.PropertyValue, en
 		out := prop.OutputValue()
 		serialized := map[string]interface{}{
 			resource.SigKey: resource.OutputValueSig,
-			"value": out.Element,
-			"dependencies": out.Dependencies,
-			"secret": out.Secret,
+			"value":         out.Element,
+			"dependencies":  out.Dependencies,
+			"secret":        out.Secret,
 		}
 		return serialized, nil
 	}
@@ -680,10 +680,10 @@ func DeserializePropertyValue(v interface{}, dec config.Decrypter,
 
 					// Create the output value.
 					outValue := resource.NewOutputProperty(resource.Output{
-						Element: desValue,
+						Element:      desValue,
 						Dependencies: depURNs,
-						Secret: secret,
-						Known: true,
+						Secret:       secret,
+						Known:        true,
 					})
 
 					return outValue, nil

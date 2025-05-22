@@ -244,7 +244,7 @@ func newDeployment(
 	var depl *deploy.Deployment
 	if !opts.isImport {
 		depl, err = deploy.NewDeployment(
-			plugctx, deplOpts, actions, target, target.Snapshot, opts.Plan, source,
+			plugctx, deplOpts, actions, target.Snapshot, opts.Plan, source,
 			localPolicyPackPaths, ctx.BackendClient)
 	} else {
 		_, defaultProviderInfo, pluginErr := installPlugins(
