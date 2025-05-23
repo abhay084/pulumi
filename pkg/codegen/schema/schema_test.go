@@ -1055,7 +1055,7 @@ func TestUsingReservedWordInTypesEmitsError(t *testing.T) {
 		assert.Equal(t, diag.Severity, hcl.DiagError)
 		assert.True(
 			t,
-			strings.Contains(diag.Summary, "pulumi is a reserved name, cannot be used for type name"),
+			strings.Contains(diag.Summary, "pulumi is a reserved name, cannot name type"),
 		)
 	}
 	assert.Nil(t, pkg)
